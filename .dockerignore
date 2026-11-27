@@ -1,0 +1,17 @@
+# Build output and VCS metadata are never needed inside the image
+target/
+.git/
+.gitignore
+
+# Maven wrapper: the build stage uses the official Maven image
+mvnw
+mvnw.cmd
+.mvn/
+
+# Local-only files
+*.log
+*.md
+.env
+.idea/
+*.iml
+.vscode/

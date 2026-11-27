@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.24.xsd">
+    <changeSet id="005-add-order-indexes" author="orderService">
+        <!-- Partial indexes: every order query is filtered by deleted = false,
+             so soft-deleted rows are excluded from the index itself. -->
+        <sql dbms="postgresql">
+            create index if not exists idx_orders_active_created_at
+                on orders (created_at) where deleted = false;
+            create index if not exists idx_orders_active_status_created_at
+                on orders (status, created_at) where deleted = false;
+            create index if not exists idx_orders_active_user_created_at
+                on orders (user_id, created_at desc) where deleted = false;
+        </sql>
+        <!-- One position per item per order; the service also rejects duplicates with 400. -->
+        <addUniqueConstraint tableName="order_items"
+                             columnNames="order_id, item_id"
+                             constraintName="uk_order_items_order_item"/>
+        <rollback>
+            <sql>
+                drop index if exists idx_orders_active_created_at;
+                drop index if exists idx_orders_active_status_created_at;
+                drop index if exists idx_orders_active_user_created_at;
+                alter table order_items drop constraint if exists uk_order_items_order_item;
+            </sql>
+        </rollback>
+    </changeSet>
+</databaseChangeLog>

@@ -1,0 +1,83 @@
+# Isolated order service stack: the application image + its own PostgreSQL.
+#
+# Required environment variables (no defaults on purpose, secrets are never committed):
+#   POSTGRES_PASSWORD
+#   INTERNAL_API_KEY   (shared secret used to call the userService internal API)
+#
+# Optional:
+#   POSTGRES_DB=orderdb, POSTGRES_USER=postgres,
+#   ORDER_DB_PORT=5433, ORDER_SERVICE_PORT=8082,
+#   USER_SERVICE_URL=http://user-service-app:8081,
+#   KEYCLOAK_JWK_SET_URI=http://auth-service-keycloak:8080/realms/jacapp/protocol/openid-connect/certs
+#
+# The app joins the shared jacapp-network, where the full stack started from
+# apiGateway/docker-compose.yaml exposes user-service-app and auth-service-keycloak.
+# A standalone `docker compose up` still starts the service and its database, but user
+# lookups return 502 until the full stack is up (or USER_SERVICE_URL points to a
+# reachable userService instance).
+#
+# Usage:
+#   POSTGRES_PASSWORD=... INTERNAL_API_KEY=... docker compose up --build -d
+#   docker compose down -v
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: order-service-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-orderdb}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD_is_required}
+    ports:
+      # 5433 on the host to avoid a clash with the userService stack (5432)
+      - "${ORDER_DB_PORT:-5433}:5432"
+    volumes:
+      - order_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - order-service-network
+
+  app:
+    build: .
+    container_name: order-service-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${ORDER_SERVICE_PORT:-8082}:8082"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-orderdb}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD_is_required}
+      - USER_SERVICE_URL=${USER_SERVICE_URL:-http://user-service-app:8081}
+      - KEYCLOAK_JWK_SET_URI=${KEYCLOAK_JWK_SET_URI:-http://auth-service-keycloak:8080/realms/jacapp/protocol/openid-connect/certs}
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:?INTERNAL_API_KEY_is_required}
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:8082/actuator/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    networks:
+      - order-service-network
+      - jacapp-network
+
+networks:
+  # Internal network of this stack: only the app talks to its database
+  order-service-network:
+    driver: bridge
+  # Shared network of the whole system. The same network key and name are used by
+  # apiGateway/docker-compose.yaml, so both files reuse one network (created by
+  # whichever stack starts first).
+  jacapp-network:
+    name: jacapp-network
+    driver: bridge
+
+volumes:
+  order_db_data:
